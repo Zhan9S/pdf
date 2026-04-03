@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF拆分与合并工具</title>
+    <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+    <style>
+        *{margin:0;padding:0;box-sizing:border-box;font-family:"Microsoft YaHei",sans-serif;}
+        body{background:#f5f7fa;padding:30px;max-width:900px;margin:0 auto;}
+        h2{color:#2c3e50;text-align:center;margin-bottom:25px;}
+        .tool-box{background:#fff;padding:24px;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,0.06);margin-bottom:25px;}
+        .tool-box h3{margin-bottom:15px;color:#34495e;border-left:4px solid #3498db;padding-left:10px;}
+        input[type="file"]{padding:10px;width:100%;border:1px solid #ddd;border-radius:6px;margin:10px 0;}
+        .info{color:#666;margin:8px 0;}
+        .tip{color:#e67e22;font-size:14px;margin:8px 0;}
+        .input-row{display:flex;gap:10px;align-items:center;margin:12px 0;flex-wrap:wrap;}
+        input{padding:9px;border:1px solid #ccc;border-radius:5px;flex:1;min-width:200px;}
+        button{padding:10px 20px;background:#3498db;color:white;border:none;border-radius:6px;cursor:pointer;}
+        button:hover{background:#2980b9;}
+        #mergeFileList{margin:10px 0;padding-left:10px;}
+        #mergeFileList li{margin:4px 0;color:#333;}
+        .split-btn{background:#27ae60;}
+        .split-btn:hover{background:#219653;}
+        .merge-btn{background:#e74c3c;}
+        .merge-btn:hover{background:#c0392b;}
+    </style>
+</head>
+<body>
+
+<h2>📄 PDF 拆分 & 合并 全能工具</h2>
+
+<!-- ========== PDF 拆分功能 ========== -->
+<div class="tool-box">
+    <h3>🔪 PDF 拆分（提取指定页面）</h3>
+    <p class="tip">格式：1-3,5,7-9  支持区间+单页，逗号分隔</p>
+    <input type="file" id="pdfFile" accept=".pdf">
+    <div class="info" id="totalPage">总页数：未上传</div>
+    <div class="input-row">
+        <input type="text" id="pageRange" placeholder="输入要提取的页码，如：1-3,5,8">
+        <button class="split-btn" onclick="splitPdf()">开始拆分</button>
+    </div>
+</div>
+
+<!-- ========== PDF 合并功能 ========== -->
+<div class="tool-box">
+    <h3>🧩 PDF 合并（多个合成一个）</h3>
+    <p class="tip">可选择多个PDF文件，按选择顺序自动合并</p>
+    <input type="file" id="mergeFiles" accept=".pdf" multiple>
+    <ul id="mergeFileList"></ul>
+    <button class="merge-btn" onclick="mergePdf()">开始合并</button>
+</div>
+
+<script>
+// ====================== 拆分功能 ======================
+let pdfBytes = null;
+let totalPages = 0;
+
+document.getElementById('pdfFile').addEventListener('change', async function(e){
+    const file = e.target.files[0];
+    if(!file) return;
+    const arrayBuffer = await file.arrayBuffer();
+    pdfBytes = new Uint8Array(arrayBuffer);
+    const pdfDoc = await PDFLib.PDFDocument.load(pdfBytes);
+    totalPages = pdfDoc.getPageCount();
+    document.getElementById('totalPage').innerText = `总页数：${totalPages} 页`;
+});
+
+function parseRange(str){
+    const res = new Set();
+    str.split(',').forEach(p => {
+        p = p.trim();
+        if(p.includes('-')){
+            let [s,e] = p.split('-').map(Number);
+            s = Math.max(1, s);
+            e = Math.min(totalPages, e);
+            for(let i=s;i<=e;i++) res.add(i);
+        }else{
+            let num = parseInt(p);
+            if(num>=1 && num<=totalPages) res.add(num);
+        }
+    });
+    return Array.from(res).sort((a,b)=>a-b);
+}
+
+async function splitPdf(){
+    if(!pdfBytes) return alert('请先上传PDF！');
+    const val = document.getElementById('pageRange').value.trim();
+    if(!val) return alert('请输入页码！');
+    const pages = parseRange(val);
+    if(pages.length===0) return alert('页码无效！');
+
+    const src = await PDFLib.PDFDocument.load(pdfBytes);
+    const newPdf = await PDFLib.PDFDocument.create();
+    const copied = await newPdf.copyPages(src, pages.map(x=>x-1));
+    copied.forEach(p => newPdf.addPage(p));
+
+    const bytes = await newPdf.save();
+    downloadFile(bytes, `拆分后的PDF_${pages.join('_')}.pdf`);
+}
+
+// ====================== 合并功能 ======================
+let mergeFileList = [];
+
+document.getElementById('mergeFiles').addEventListener('change', function(e){
+    mergeFileList = Array.from(e.target.files);
+    const list = document.getElementById('mergeFileList');
+    list.innerHTML = '';
+    mergeFileList.forEach((f,i) => {
+        const li = document.createElement('li');
+        li.textContent = `${i+1}. ${f.name}`;
+        list.appendChild(li);
+    });
+});
+
+async function mergePdf(){
+    if(mergeFileList.length < 2) return alert('请选择至少2个PDF文件！');
+    const newPdf = await PDFLib.PDFDocument.create();
+
+    for(let file of mergeFileList){
+        const buffer = await file.arrayBuffer();
+        const pdf = await PDFLib.PDFDocument.load(buffer);
+        const pages = await newPdf.copyPages(pdf, pdf.getPageIndices());
+        pages.forEach(p => newPdf.addPage(p));
+    }
+
+    const bytes = await newPdf.save();
+    downloadFile(bytes, `合并完成_${new Date().getTime()}.pdf`);
+}
+
+// 下载工具
+function downloadFile(bytes, name){
+    const blob = new Blob([bytes], {type:'application/pdf'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    a.click();
+    URL.revokeObjectURL(url);
+}
+</script>
+
+</body>
+</html>
